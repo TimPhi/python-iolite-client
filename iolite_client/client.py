@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import ssl
 from base64 import b64encode
 from collections import defaultdict
 from dataclasses import dataclass
@@ -138,12 +139,13 @@ class Client:
 
     BASE_URL = "wss://remote.iolite.de"
 
-    def __init__(self, sid: str, username: str, password: str):
+    def __init__(self, sid: str, username: str, password: str, verify_ssl: bool = True):
         self.discovered = Discovered()
         self.request_handler = RequestHandler()
         self.sid = sid
         self.username = username
         self.password = password
+        self.verify_ssl = verify_ssl
 
     @staticmethod
     async def __send_request(request: Union[str, dict], websocket):
@@ -161,12 +163,38 @@ class Client:
 
         return headers
 
+    def _ws_connect(self, uri: str):
+        """
+        Create a websockets connection using the correct headers parameter for the
+        installed websockets version.
+
+        websockets < 10: use `additional_headers`
+        websockets >= 10: use `extra_headers`
+        """
+        headers = self._get_default_headers()
+
+        kwargs = {}
+        if not self.verify_ssl:
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            kwargs["ssl"] = ssl_context
+
+        try:
+            import inspect
+
+            sig = inspect.signature(websockets.connect)
+            if "extra_headers" in sig.parameters:
+                return websockets.connect(uri, extra_headers=headers, **kwargs)
+        except Exception:
+            # Fall back to legacy parameter name if inspection fails
+            pass
+        return websockets.connect(uri, additional_headers=headers, **kwargs)
+
     async def _fetch_heating(self):
         logger.info("Connecting to heating WS")
         uri = f"{self.BASE_URL}/heating/ws?SID={self.sid}"
-        async with websockets.connect(
-            uri, extra_headers=self._get_default_headers()
-        ) as websocket:
+        async with self._ws_connect(uri) as websocket:
             async for response in websocket:
                 logger.debug(
                     f"Response received (heating) {response}",
@@ -182,9 +210,7 @@ class Client:
     async def _devices_handler(self):
         logger.info("Connecting to devices WS")
         uri = f"{self.BASE_URL}/devices/ws?SID={self.sid}"
-        async with websockets.connect(
-            uri, extra_headers=self._get_default_headers()
-        ) as websocket:
+        async with self._ws_connect(uri) as websocket:
             async for response in websocket:
                 logger.debug(
                     f"Response received (device) {response}",
@@ -198,9 +224,7 @@ class Client:
     async def _fetch_application(self, requests: list):
         logger.info("Connecting to JSON WS")
         uri = f"{self.BASE_URL}/bus/websocket/application/json?SID={self.sid}"
-        async with websockets.connect(
-            uri, extra_headers=self._get_default_headers()
-        ) as websocket:
+        async with self._ws_connect(uri) as websocket:
             for request in requests:
                 await self.__send_request(request, websocket)
 
@@ -214,7 +238,7 @@ class Client:
                     break
 
                 if response.request:
-                    await self.__send_request(request, websocket)
+                    await self.__send_request(response.request, websocket)
 
             logger.info("Finished JSON WS")
 

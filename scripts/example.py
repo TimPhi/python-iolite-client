@@ -16,13 +16,14 @@ CLIENT_ID = env("CLIENT_ID")
 CODE = env("CODE")
 NAME = env("NAME")
 LOG_LEVEL = env.log_level("LOG_LEVEL", logging.INFO)
+VERIFY_SSL = env.bool("VERIFY_SSL", True)
 
 logging.basicConfig(level=logging.getLevelName(LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 # Get SID
 oauth_storage = LocalOAuthStorage(".")
-oauth_handler = OAuthHandler(USERNAME, PASSWORD, CLIENT_ID)
+oauth_handler = OAuthHandler(USERNAME, PASSWORD, CLIENT_ID, verify_ssl=VERIFY_SSL)
 oauth_wrapper = OAuthWrapper(oauth_handler, oauth_storage)
 
 access_token = oauth_storage.fetch_access_token()
@@ -40,7 +41,7 @@ print(f"Client Id: {CLIENT_ID}")
 print("------------------")
 
 # Init client
-client = Client(sid, USERNAME, PASSWORD)
+client = Client(sid, USERNAME, PASSWORD, verify_ssl=VERIFY_SSL)
 
 logger.info("Connecting to client")
 
@@ -58,6 +59,8 @@ for room in client.discovered.get_rooms():
 
     for device in room.devices.values():
         print(f"- {device.name} {device.get_type()}")
+        if getattr(device, "model_name", None):
+            print(f"  - model: {device.model_name}")
         if isinstance(device, RadiatorValve):
             print(f"  - current: {device.current_env_temp}")
             print(f"  - mode: {device.heating_mode}")
